@@ -1,119 +1,86 @@
-#include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include "expand.h"
 
-char *expand_word(const char *word)
+static void expand_variable(Token *token)
 {
-    char result[4096];
-    int out = 0;
-    int i = 0;
+    if (token->type != TOKEN_WORD)
+        return;
 
-    if (word == NULL)
-        return NULL;
+    char result[MAX_TOKEN_LEN];
+    result[0] = '\0';
 
-    /* Expand ~ or ~/... into the user's home directory */
-    if (word[0] == '~' && (word[1] == '\0' || word[1] == '/')) {
-        const char *home = getenv("HOME");
+    char *p = token->value;
 
-        if (home != NULL) {
-            strcpy(result, home);
-            out = (int)strlen(result);
-            i = 1;
-        }
-    }
+    while (*p != '\0') {
 
-    /* Expand $VARIABLE and ${VARIABLE} */
-    while (word[i] != '\0' && out < (int)sizeof(result) - 1) {
-        if (word[i] == '$') {
-            char variable[256];
-            int variable_index = 0;
-            const char *value;
+        if (*p == '$') {
 
-            i++;
+            p++;
 
-            if (word[i] == '{') {
-                i++;
+            char variable[128];
+            int i = 0;
 
-                while (word[i] != '\0' &&
-                       word[i] != '}' &&
-                       variable_index < 255) {
-                    variable[variable_index++] = word[i++];
+            while (*p != '\0' &&
+                   ((*p >= 'A' && *p <= 'Z') ||
+                    (*p >= 'a' && *p <= 'z') ||
+                    (*p >= '0' && *p <= '9') ||
+                    *p == '_')) {
+
+                if (i < 127)
+                    variable[i++] = *p;
+
+                p++;
+            }
+
+            variable[i] = '\0';
+
+            if (i > 0) {
+
+                char *value = getenv(variable);
+
+                if (value != NULL) {
+                    strncat(result,
+                            value,
+                            MAX_TOKEN_LEN - strlen(result) - 1);
                 }
 
-                if (word[i] == '}')
-                    i++;
             } else {
-                while ((isalnum((unsigned char)word[i]) || word[i] == '_') &&
-                       variable_index < 255) {
-                    variable[variable_index++] = word[i++];
-                }
+                strncat(result,
+                        "$",
+                        MAX_TOKEN_LEN - strlen(result) - 1);
             }
 
-            variable[variable_index] = '\0';
-            value = getenv(variable);
+        } else {
 
-            if (value != NULL) {
-                while (*value != '\0' &&
-                       out < (int)sizeof(result) - 1) {
-                    result[out++] = *value++;
-                }
-            }
+            char temp[2];
 
-            continue;
+            temp[0] = *p;
+            temp[1] = '\0';
+
+            strncat(result,
+                    temp,
+                    MAX_TOKEN_LEN - strlen(result) - 1);
+
+            p++;
         }
-
-        result[out++] = word[i++];
     }
 
-    result[out] = '\0';
+    strncpy(token->value,
+            result,
+            MAX_TOKEN_LEN - 1);
 
-    {
-        char *expanded = malloc(strlen(result) + 1);
-
-        if (expanded != NULL)
-            strcpy(expanded, result);
-
-        return expanded;
-    }
+    token->value[MAX_TOKEN_LEN - 1] = '\0';
 }
 
-void expand_command(Command *command)
+void expand_tokens(Token tokens[], int *count)
 {
-    int i;
+    for (int i = 0; i < *count; i++) {
 
-    for (i = 0; command->argv[i] != NULL; i++) {
-        char *expanded = expand_word(command->argv[i]);
-
-        if (expanded != NULL) {
-            free(command->argv[i]);
-            command->argv[i] = expanded;
+        if (tokens[i].type == TOKEN_WORD) {
+            expand_variable(&tokens[i]);
         }
     }
-
-    if (command->input_file != NULL) {
-        char *expanded = expand_word(command->input_file);
-
-        if (expanded != NULL) {
-            free(command->input_file);
-            command->input_file = expanded;
-        }
-    }
-
-    if (command->output_file != NULL) {
-        char *expanded = expand_word(command->output_file);
-
-        if (expanded != NULL) {
-            free(command->output_file);
-            command->output_file = expanded;
-        }
-    }
-}
-
-void expand_pipeline(Pipeline *pipeline)
-{
-    int i;
-
-    for (i = 0; i < pipeline->command_count; i++)
-        expand_command(&pipeline->commands[i]);
 }
